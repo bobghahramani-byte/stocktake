@@ -40,13 +40,13 @@
   nav button[aria-selected="true"]{color:var(--ink); border-bottom-color:var(--green)}
   nav button:focus-visible{outline:2px solid var(--green); outline-offset:-2px}
 
-  main{flex:1; padding:16px}
+  main{flex:1; padding:16px 16px 56px}
   .tab{display:none}
   .tab.on{display:block}
 
   /* ---- Scan tab ---- */
   .viewport{
-    position:relative; aspect-ratio:1/1; width:100%; background:#000;
+    position:relative; aspect-ratio:1/1; width:100%; max-height:42vh; margin:0 auto; background:#000;
     border-radius:14px; overflow:hidden; border:1px solid var(--line);
   }
   .viewport video{width:100%; height:100%; object-fit:cover; display:block}
@@ -66,11 +66,11 @@
   .cam-tools button[disabled]{opacity:.4}
 
   .stamp{
-    margin-top:12px; border-radius:14px; padding:16px; border:2px solid var(--line);
+    margin-top:10px; border-radius:14px; padding:11px 14px; border:2px solid var(--line);
     background:var(--panel); transition:background .12s, border-color .12s;
   }
-  .stamp .verdict{font-size:13px; font-weight:800; letter-spacing:.08em; text-transform:uppercase}
-  .stamp .cons{font-family:var(--data); font-size:30px; font-weight:700; margin:4px 0 2px; word-break:break-all}
+  .stamp .verdict{font-size:12px; font-weight:800; letter-spacing:.08em; text-transform:uppercase}
+  .stamp .cons{font-family:var(--data); font-size:24px; font-weight:700; margin:3px 0 2px; word-break:break-all}
   .stamp .sub{font-family:var(--data); font-size:11px; color:var(--muted); word-break:break-all}
   .stamp.matched{background:var(--green-soft); border-color:var(--green)}
   .stamp.matched .verdict{color:var(--green)}
@@ -91,16 +91,16 @@
     padding:0 16px; border-radius:10px; border:0; background:var(--ink); color:#fff; font-weight:700;
   }
 
-  /* ---- Tally bar ---- */
-  .tally{
-    position:sticky; bottom:0; display:grid; grid-template-columns:repeat(4,1fr);
-    gap:1px; background:var(--line); border-top:1px solid var(--line);
-  }
-  .tally div{background:var(--panel); padding:9px 4px; text-align:center}
-  .tally .n{font-family:var(--data); font-size:20px; font-weight:700; line-height:1}
-  .tally .k{font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin-top:3px}
+  /* ---- Tally bar (compact) ---- */
+  .tally{position:sticky; bottom:0; background:var(--panel); border-top:1px solid var(--ink)}
+  .tally .prog{height:4px; background:var(--line)}
+  .tally .prog>span{display:block; height:100%; width:0%; background:var(--green); transition:width .2s}
+  .tally .tiles{display:grid; grid-template-columns:repeat(4,1fr)}
+  .tally .tiles>div{padding:6px 4px 7px; text-align:center; border-left:1px solid var(--line)}
+  .tally .tiles>div:first-child{border-left:0}
+  .tally .n{font-family:var(--data); font-size:17px; font-weight:700; line-height:1}
+  .tally .k{font-size:9px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin-top:2px}
   .tally .matched .n{color:var(--green)}
-  .tally .missing .n{color:var(--ink)}
   .tally .unexpected .n{color:var(--crimson)}
 
   /* ---- Review tab ---- */
@@ -227,7 +227,8 @@
           <select id="consCol"></select>
           <div class="btnrow"><button class="btn primary" id="applyMap">Use these columns</button></div>
         </div>
-        <div class="hint" id="expStatus">No expected list loaded — you can still scan; everything will read as “unexpected” until a list is loaded.</div>
+        <div class="hint" id="expStatus">Checking the server for an expected list…</div>
+        <div class="btnrow"><button class="btn ghost" id="reloadServer">Reload list from server</button></div>
       </div>
 
       <div class="card">
@@ -241,10 +242,13 @@
   </main>
 
   <div class="tally">
-    <div class="counted"><div class="n" id="tCounted">0</div><div class="k">Counted</div></div>
-    <div class="matched"><div class="n" id="tMatched">0</div><div class="k">Matched</div></div>
-    <div class="missing"><div class="n" id="tMissing">0</div><div class="k">Missing</div></div>
-    <div class="unexpected"><div class="n" id="tUnexp">0</div><div class="k">Unexpected</div></div>
+    <div class="prog"><span id="progFill"></span></div>
+    <div class="tiles">
+      <div class="counted"><div class="n" id="tCounted">0</div><div class="k">Counted</div></div>
+      <div class="matched"><div class="n" id="tMatched">0</div><div class="k">Matched</div></div>
+      <div class="missing"><div class="n" id="tMissing">0</div><div class="k">Missing</div></div>
+      <div class="unexpected"><div class="n" id="tUnexp">0</div><div class="k">Unexpected</div></div>
+    </div>
   </div>
 </div>
 
@@ -10499,6 +10503,8 @@ function renderTally(){
   $('tMatched').textContent=r.counts.matched;
   $('tMissing').textContent=r.counts.missing;
   $('tUnexp').textContent=r.counts.unexpected;
+  const pf=$('progFill');
+  if(pf){ const exp=r.counts.expected; pf.style.width=(exp>0?Math.round(100*r.counts.matched/exp):0)+'%'; }
 }
 
 let reviewFilter='all';
@@ -10653,6 +10659,31 @@ $('torchBtn').addEventListener('click',async()=>{
   try{ await track.applyConstraints({advanced:[{torch:!on}]}); $('torchBtn').dataset.on=on?'0':'1'; }catch(e){}
 });
 
+/* ===== auto-load expected list from the repo ===== */
+const EXPECTED_URL='expected.csv'; // commit this file next to index.html in the repo
+function fillSelect(sel,headers,v){ sel.innerHTML=''; headers.forEach(h=>{const o=document.createElement('option');o.value=h;o.textContent=h;sel.appendChild(o);}); sel.value=v; }
+async function tryAutoLoad(manual){
+  if(typeof fetch!=='function') return false;
+  try{
+    const res=await fetch(EXPECTED_URL,{cache:'no-store'});
+    if(!res.ok){ if(manual) $('expStatus').textContent='No expected.csv on the server (HTTP '+res.status+'). Load one manually below, or commit expected.csv to the repo.'; return false; }
+    const text=await res.text();
+    const {headers,records}=parseCSV(text);
+    if(!records.length){ if(manual) $('expStatus').textContent='expected.csv on the server is empty.'; return false; }
+    const guessId=headers.find(h=>/id|link|url|record/i.test(h))||headers[0];
+    const guessCons=headers.find(h=>/consign/i.test(h))||headers.find(h=>/no\.?$|number/i.test(h))||headers[0];
+    const probe=indexExpected(records,guessId,guessCons);
+    if(!probe.rows.some(r=>r._id)){ if(manual) $('expStatus').textContent='Found expected.csv but no Salesforce IDs in the “'+guessId+'” column — check the file.'; return false; }
+    state.expectedRaw=records; state.headers=headers; state.idCol=guessId; state.consCol=guessCons; save();
+    pendingHeaders=headers; pendingRecords=records;
+    fillSelect($('idCol'),headers,guessId); fillSelect($('consCol'),headers,guessCons); $('mapWrap').hidden=false;
+    $('expStatus').textContent='Loaded '+probe.rows.length+' assets from the server ('+probe.rows.filter(r=>r._id).length+' with an ID). Columns: “'+guessId+'” / “'+guessCons+'”. Change above if wrong.';
+    renderTally(); renderReview();
+    return true;
+  }catch(e){ if(manual) $('expStatus').textContent='Could not reach expected.csv (offline, or the file is opened directly instead of over https).'; return false; }
+}
+$('reloadServer').addEventListener('click',()=>tryAutoLoad(true));
+
 /* ===== init ===== */
 refreshSessLabel();
 if(state.session) $('sessName').value=state.session.name;
@@ -10662,6 +10693,7 @@ if(state.expectedRaw.length&&state.idCol){
   $('expStatus').textContent='Loaded '+idx.rows.length+' expected assets ('+idx.rows.filter(r=>r._id).length+' with a usable ID).';
 }
 renderTally(); renderReview();
+tryAutoLoad(false); // refresh from the repo's expected.csv if present (keeps existing list on failure)
 </script>
 </body>
 </html>
